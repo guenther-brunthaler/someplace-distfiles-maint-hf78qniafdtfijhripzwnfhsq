@@ -1,6 +1,5 @@
 #! /bin/sh
-# v2021.340.1
-minsize=10k
+# v2021.340.2
 set -e
 cleanup() {
 	rc=$?
@@ -25,10 +24,9 @@ test -d "$repo"
 force=false
 mode=merge+move
 dry_run=false
-while getopts rfnml opt
+while getopts fnml opt
 do
 	case $opt in
-		r) mode=remove;;
 		l) mode=lookup;;
 		m) mode=merge-only;;
 		n) dry_run=true;;
@@ -59,7 +57,6 @@ process() {
 		/*) ;;
 		*) f=$PWD/$f
 	esac
-	find "$f" -size -"$minsize" >& 5
 	println "$f"
 }
 
@@ -76,36 +73,14 @@ case $# in
 		do
 			process "$a"
 		done
-esac > "$TD"/cand 5> "$TD"/warn
-if
-	case $mode in lookup | remove) false;; *) true; esac \
-	&& test -s "$TD"/warn && test $force = false
-then
-	t=`mktemp small-files-XXXXXX.txt`
-	sort < "$TD"/warn | tee "$t"
-	echo
-	echo "The above list of files seem to be too small to be likely"
-	echo "candidates for repository archives. Run again with -f in"
-	echo "order to suppress this check after verifying the files are"
-	echo "actually appropriate for inclusion. The above file list has"
-	echo "also been saved as file '$t' for your convenience."
-	false || exit
-fi >& 2
-sed 's/./\\&/g' "$TD"/cand \
-	| xargs readlink -f | LC_COLLATE=C sort \
+esac \
+| sed 's/./\\&/g' \
+| xargs readlink -f | LC_COLLATE=C sort \
 > "$TD"/merge
-rm -- "$TD"/cand
 
 run() {
 	case $dry_run in
 		true) set echo "SIMULATION: $@"
-	esac
-	"$@"
-}
-
-run_always() {
-	case $dry_run in
-		true) echo "SIMULATION: $@"
 	esac
 	"$@"
 }
@@ -117,17 +92,6 @@ create() {
 # Append string "$1" to file "$2" (will be created if it does not yet exist).
 str_append() {
 	println "$1" >> "$2"
-}
-
-# Save string "$1" to file "$2" (will be created if it does not yet exist).
-str_save() {
-	println "$1" > "$2"
-}
-
-# Remove the single line in file "$1" from file "$2" which must be sorted.
-remove_match() {
-	LC_COLLATE=POSIX run comm -23 -- "$2" "$1" > "$TD"/reduced
-	cat < "$TD"/reduced > "$2"
 }
 
 while IFS= read -r orig
@@ -145,18 +109,14 @@ do
 				;;
 			merge-only) echo "Copying '$orig' into repository"
 		esac
-		case $mode in
-			remove) ;;
-			*)
-				run cp -p -- "$orig" "$ht"
-				case $dry_run in
-					false)
-						if test ! -w "$ht"
-						then
-							 chmod +w "$ht"
-						fi
-				esac
-			esac
+		run cp -p -- "$orig" "$ht"
+		case $dry_run in
+			false)
+				if test ! -w "$ht"
+				then
+					 chmod +w "$ht"
+				fi
+		esac
 	fi
 	i=`basename -- "$orig"`-$i
 	rt=$repo/$i
@@ -172,22 +132,17 @@ do
 	else
 		test ! -e "$rt"
 		case $mode in
-			remove) ;;
 			lookup)
 				echo "Not yet in repository: '$orig'"
 				continue
-				;;
-			*) run ln -s "$h" "$rt"
 		esac
+		run ln -s "$h" "$rt"
 	fi
 	h=$h.refs
 	ht=$repo/$h
 	if test ! -e "$ht"
 	then
-		case $mode in
-			remove) ;;
-			*) run create "$ht"
-		esac
+		run create "$ht"
 	fi
 	i=$i.refs
 	rt=$repo/$i
@@ -197,36 +152,11 @@ do
 		test "$t" = "$h"
 	else
 		test ! -e "$rt"
-		case $mode in
-			remove) ;;
-			*) run ln -s "$h" "$rt"
-		esac
+		run ln -s "$h" "$rt"
 	fi
+	run str_append "$orig" "$rt"
+	LC_COLLATE=POSIX run sort -o "$rt" -u "$rt"
 	case $mode in
-		remove)
-			oes=`wc -l < "$rt"`
-			run_always str_save "$orig" "$TD"/ref
-			LC_COLLATE=POSIX comm -12 -- "$rt" "$TD"/ref \
-				> "$TD"/match
-			if test -s "$TD"/match
-			then
-				run remove_match "$TD"/ref "$rt"
-				case $oes in
-					1)
-						run rm -- "${ht%.*}"
-						run rm -- "$ht"
-						run rm -- "${rt%.*}"
-						run rm -- "$rt"
-				esac
-			fi
-			run rm -- "$orig"
-			;;
-		*)
-			run str_append "$orig" "$rt"
-			LC_COLLATE=POSIX run sort -o "$rt" -u "$rt"
-	esac
-	case $mode in
-		merge-only | lookup | remove) ;;
-		*) run ln -sf -- "${rt%.refs}" "$orig"
+		merge+move) run ln -sf -- "${rt%.refs}" "$orig"
 	esac
 done < "$TD"/merge
