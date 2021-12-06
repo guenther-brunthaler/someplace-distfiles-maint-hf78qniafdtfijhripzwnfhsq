@@ -1,0 +1,61 @@
+Distfiles redirection framework
+===============================
+v2021.340
+
+The purpose of this framework is to avoid duplication of identical package 
+information metadata files, source file archives and patch files across 
+multiple filesystems.
+
+The idea is to move all the real files to THIS filesystem and replace the 
+original files with symlinks to the new locations.
+
+As a result, multiple copies of the same source archive will be replaced by a 
+single copy within THIS filesystem, avoiding duplication.
+
+For ease of use, the created replacement symlinks will contain the absolute 
+path to THIS filesystem's mount point.
+
+While this allows to move the directories containing the replacement symlinks 
+to new locations without invalidating the symlinks, it also means that the 
+mount point most not be changed or all the replacement symlinks will need 
+adjustment before they can be used again.
+
+The deduplication is best explained by an example:
+
+lrwxrwxrwx ./yasm-1.3.0.tar.gz-3388492465 -> md5/fc9e586751ff789b34b1f21d572d96af
+lrwxrwxrwx ./yasm-1.3.0.tar.gz-3388492465.refs -> md5/fc9e586751ff789b34b1f21d572d96af.refs
+
+$ cat yasm-1.3.0.tar.gz-3388492465.refs
+/home/mnt/netbsd/pkgsrc/stable/pkgsrc/distfiles/yasm-1.3.0.tar.gz
+
+This means that the original file 
+"/home/mnt/netbsd/pkgsrc/stable/pkgsrc/distfiles/yasm-1.3.0.tar.gz" has been 
+replaced by an absolute symlink to "./yasm-1.3.0.tar.gz-3388492465", which 
+itself is a relative symlink to file "md5/fc9e586751ff789b34b1f21d572d96af" 
+with the actual file contents.
+
+The "3388492465" is the CRC-32 (as calculated by "cksum") of the original file 
+contents, while "fc9e586751ff789b34b1f21d572d96af" is the MD5 checksum (as 
+calculated by "md5sum -b") of the same file contents.
+
+The CRC-part of the filename serves to purpose of avoiding name clashes in 
+case different source archives with identical basenames have been moved to 
+THIS filesystem.
+
+The MD5-part of the filenames serves de-duplication of differently names files 
+which nevertheless have the same contents.
+
+The .refs files keep track of the existing replacement symlinks which 
+reference files within THIS filesystem. They contain a list of absolute real 
+pathnames of symlinks which all reference a file with the same contents. This 
+list is kept sorted according to locale "POSIX" without duplicate lines.
+
+If a .refs-File is empty, this means no symlinks anywhere reference this 
+source archive file any longer, so it may be deleted safely (along with its 
+associated .refs file and the CRC-based symlinks).
+
+In order to avoid removal of a source archive which is not referenced from 
+anywhere else any longer but shall still be kept, symlinks can be created 
+somewhere within the keep/ subdirectory tree. ".refs"-file entries for those 
+symlinks will then be added as usual, ensuring the archive will never be 
+deleted as a consequence of missing references.
