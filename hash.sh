@@ -6,7 +6,7 @@
 # When any arguments are given, just calculate some of the hard-coded
 # constants used in the hash calculation commands.
 #
-# v2021.340
+# v2021.340.1
 
 case $# in
 	0)
@@ -32,7 +32,7 @@ files_per_second = 10
 years = 500
 
 days_in_4_years = 3 * 365 + 366
-days_in_100_years = days_in_4_years * (100 / 4) - 1
+days_in_100_years = 100 * days_in_4_years / 4 - 1
 days_in_400_years = days_in_100_years * 4 + 1
 avg_days_per_year = days_in_400_years / 400
 seconds_per_year = 60 * 60 * 24 * avg_days_per_year
@@ -45,7 +45,7 @@ octets_needed = ceiling(bits_needed / 8);
 base32_digits_needed = ceiling(bits_needed / log2(32));
 
 print(
-      "Leading octets needed from binary SHA2-256 hash: "
+      "Leading octets needed from binary hash: "
    +  str(octets_needed)
    +  "\n"
    +  "Leading base-32 digits needed from those octets: "
