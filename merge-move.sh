@@ -1,4 +1,5 @@
 #! /bin/sh
+# v2021.340.1
 minsize=10k
 set -e
 cleanup() {
@@ -15,112 +16,29 @@ case $0 in
 	*) me=$PWD/$0
 esac
 test -f "$me"
-repo=`dirname -- "$me"`
-repo=`readlink -f -- "$repo"`
+scripts=`dirname -- "$me"`
+test -d "$scripts"
+repo=`readlink -f -- "$scripts"`
+repo=`dirname -- "$repo"`
 test -d "$repo"
 
 force=false
 mode=merge+move
-while getopts fc opt
+dry_run=false
+while getopts rfnml opt
 do
 	case $opt in
-		c) mode=checksum;;
+		r) mode=remove;;
+		l) mode=lookup;;
+		m) mode=merge-only;;
+		n) dry_run=true;;
 		f) force=true;;
 		*) false || exit
 	esac
 done
 shift `expr $OPTIND - 1 || :`
 
-all=true; # An *: entry must be first for initializing $pkg.
-for need in coreutils: base32 : openssl
-do
-	case $need in
-		*:) pkg=${need%:};;
-		*)
-			: ${pkg:="$need"}
-			command -v -- "${need}" > /dev/null 2>& 1 || {
-				echo
-				echo "Required utility '$need' is missing!"
-				echo "On some systems it can be installed with"
-				echo "\$ sudo apt-get install $pkg"
-				all=false
-			} >& 2
-			pkg=
-	esac
-done
-$all || exit
-
-# Verify that base32 uses the expected encoding alphabet and that openssl
-# supports the "sha256"-subcommand with the "-binary" option.
-test "`
-	printf %s AIOZ2367 | base32 -d | openssl sha256 -binary \
-	| dd bs=5 count=1 2> /dev/null | base32
-`" = JAWIXFH7
-
-println() {
-	printf '%s\n' "$*"
-}
-
-custom_b32() {
-	# We choose the hash length so that there is a chance less than one
-	# permill of a hash collision if earth's population has grown to 100
-	# billion people and all of them do nothing else than creating 10 new
-	# files per second for 500 years.
-	#
-	# files := 100e9 * 500 * 10 * 86400 * (365 + 1 / 4);
-	# p_collision_50percent := files ** 2;
-	# first_expected_collision := 2 * p_collision_50percent;
-	# p_collision_1permill := first_expected_collision * 1000;
-	# bits_needed := log2(p_collision_1permill);
-	# octets_needed := ceiling(bits_needed / 8);
-	# base32_digits_needed := ceiling(bits_needed / log2(32));
-	openssl sha256 -binary | dd bs=20 count=1 2> /dev/null \
-	| base32 | cut -c -32 | LC_COLLATE=C tr A-Z2-7 02-8a-fh-km-z
-}
-
-TD=`mktemp -d -- "${TMPDIR:-/tmp}/${0##*/}".XXXXXXXXXX`
-case $mode in
-	checksum)
-		f='[[:space:]]\{1,\}'; rx='[^[:space:]]\{1,\}'
-		rx="$rx$f$rx$f\\($rx\\)$f$rx$f$rx$f$rx"
-		rx=$rx'[[:space:]]\(.\{1,\}\)$'
-		case $# in
-			0)
-				cat > "$TD"/file
-				echo F >& 5
-				println "$TD"/file
-				;;
-			*)
-				for a
-				do
-					test ! -d "$a"; test -e "$a"
-					echo T >& 5
-					println "$a"
-				done
-		esac 5> "$TD"/wrname \
-		| sed 's/./\\&/g' | LC_NUMERIC=C LC_TIME=C xargs ls -og -- \
-		| sed 's/'"$rx"'/\1 \2/' > "$TD"/sz_fn
-		while IFS=' ' read -r z f
-		do
-			read wrn <& 5
-			h=`custom_b32 < "$f"`
-			case $wrn in
-				T) echo "$h-$z $f";;
-				F) echo "$h-$z";;
-				*) false || exit
-			esac
-		done < "$TD"/sz_fn 5< "$TD"/wrname
-		exit
-esac
-exit
-
-find "$repo" -name 'lost+found' -prune -o -name '*.refs' -print \
-| while IFS= read -r f
-do
-	LC_TIME=C ls -og -- "${f%.*}"
-done | cut -d ' ' -f 3,7- \
-| sed 's/^\([0-9]\{1,\}\) \(.\{1,\}-\)\([0-9]\{1,\}\)$/\3 \1 \2\3/' \
-| LC_COLLATE=C sort > "$TD"/avail
+"$scripts"/verify-requirements.sh
 
 println() {
 	printf '%s\n' "$*"
@@ -145,6 +63,7 @@ process() {
 	println "$f"
 }
 
+TD=`mktemp -d -- "${TMPDIR:-/tmp}/${0##*/}".XXXXXXXXXX`
 case $# in
 	0)
 		while IFS= read -r a
@@ -158,7 +77,9 @@ case $# in
 			process "$a"
 		done
 esac > "$TD"/cand 5> "$TD"/warn
-if test -s "$TD"/warn && test $force = false
+if
+	case $mode in lookup | remove) false;; *) true; esac \
+	&& test -s "$TD"/warn && test $force = false
 then
 	t=`mktemp small-files-XXXXXX.txt`
 	sort < "$TD"/warn | tee "$t"
@@ -170,9 +91,142 @@ then
 	echo "also been saved as file '$t' for your convenience."
 	false || exit
 fi >& 2
-sed 's/./\\&/g' "$TD"/cand | xargs cksum | LC_COLLATE=C sort > "$TD"/merge
+sed 's/./\\&/g' "$TD"/cand \
+	| xargs readlink -f | LC_COLLATE=C sort \
+> "$TD"/merge
 rm -- "$TD"/cand
 
-exit
-t=$(readlink -- "$f"); case $t in /home/mnt/distfiles/*) echo "$f" >>
-"$t".refs; esac; done
+run() {
+	case $dry_run in
+		true) set echo "SIMULATION: $@"
+	esac
+	"$@"
+}
+
+run_always() {
+	case $dry_run in
+		true) echo "SIMULATION: $@"
+	esac
+	"$@"
+}
+
+create() {
+	> "$1"
+}
+
+# Append string "$1" to file "$2" (will be created if it does not yet exist).
+str_append() {
+	println "$1" >> "$2"
+}
+
+# Save string "$1" to file "$2" (will be created if it does not yet exist).
+str_save() {
+	println "$1" > "$2"
+}
+
+# Remove the single line in file "$1" from file "$2" which must be sorted.
+remove_match() {
+	LC_COLLATE=POSIX run comm -23 -- "$2" "$1" > "$TD"/reduced
+	cat < "$TD"/reduced > "$2"
+}
+
+while IFS= read -r orig
+do
+	i=`"$scripts"/id.sh < "$orig"`
+	h=`"$scripts"/hash.sh < "$orig"`
+	h=by-hash/$h
+	ht=$repo/$h
+	if test ! -e "$ht"
+	then
+		case $mode in
+			lookup)
+				echo "Not yet in repository: '$orig'"
+				continue
+				;;
+			merge-only) echo "Copying '$orig' into repository"
+		esac
+		case $mode in
+			remove) ;;
+			*)
+				run cp -p -- "$orig" "$ht"
+				case $dry_run in
+					false)
+						if test ! -w "$ht"
+						then
+							 chmod +w "$ht"
+						fi
+				esac
+			esac
+	fi
+	i=`basename -- "$orig"`-$i
+	rt=$repo/$i
+	if test -L "$rt"
+	then
+		t=`readlink -- "$rt"`
+		test "$t" = "$h"
+		case $mode in
+			lookup)
+				echo "'$orig' = '$rt'"
+				continue
+		esac
+	else
+		test ! -e "$rt"
+		case $mode in
+			remove) ;;
+			lookup)
+				echo "Not yet in repository: '$orig'"
+				continue
+				;;
+			*) run ln -s "$h" "$rt"
+		esac
+	fi
+	h=$h.refs
+	ht=$repo/$h
+	if test ! -e "$ht"
+	then
+		case $mode in
+			remove) ;;
+			*) run create "$ht"
+		esac
+	fi
+	i=$i.refs
+	rt=$repo/$i
+	if test -L "$rt"
+	then
+		t=`readlink -- "$rt"`
+		test "$t" = "$h"
+	else
+		test ! -e "$rt"
+		case $mode in
+			remove) ;;
+			*) run ln -s "$h" "$rt"
+		esac
+	fi
+	case $mode in
+		remove)
+			oes=`wc -l < "$rt"`
+			run_always str_save "$orig" "$TD"/ref
+			LC_COLLATE=POSIX comm -12 -- "$rt" "$TD"/ref \
+				> "$TD"/match
+			if test -s "$TD"/match
+			then
+				run remove_match "$TD"/ref "$rt"
+				case $oes in
+					1)
+						run rm -- "${ht%.*}"
+						run rm -- "$ht"
+						run rm -- "${rt%.*}"
+						run rm -- "$rt"
+				esac
+			fi
+			run rm -- "$orig"
+			;;
+		*)
+			run str_append "$orig" "$rt"
+			LC_COLLATE=POSIX run sort -o "$rt" -u "$rt"
+	esac
+	case $mode in
+		merge-only | lookup | remove) ;;
+		*) run ln -sf -- "${rt%.refs}" "$orig"
+	esac
+done < "$TD"/merge
