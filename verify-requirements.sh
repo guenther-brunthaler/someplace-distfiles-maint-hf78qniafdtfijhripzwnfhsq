@@ -41,3 +41,10 @@ do
 	} >& 2
 done
 $all || exit
+
+# Verify that base32 uses the expected encoding alphabet and that openssl
+# supports the "sha256"-subcommand with the "-binary" option.
+test "`
+	printf %s AIOZ2367 | base32 -d | openssl sha256 -binary \
+	| dd bs=5 count=1 2> /dev/null | base32
+`" = JAWIXFH7
