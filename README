@@ -1,0 +1,75 @@
+Distfiles redirection framework
+===============================
+v2021.340.1
+
+The purpose of this framework is to avoid duplication of identical package 
+information metadata files, source file archives and patch files across 
+multiple filesystems.
+
+The idea is to move all the real files to THIS filesystem and replace the 
+original files with symlinks to the new locations.
+
+As a result, multiple copies of the same source archive will be replaced by a 
+single copy within THIS filesystem, avoiding duplication.
+
+For ease of use, the created replacement symlinks will contain the absolute 
+path to THIS filesystem's mount point.
+
+While this allows to move the directories containing the replacement symlinks 
+to new locations without invalidating the symlinks, it also means that the 
+mount point most not be changed or all the replacement symlinks will need 
+adjustment before they can be used again.
+
+The deduplication is best explained by an example:
+
+$ maint/id.sh < yasm-1.3.0.tar.gz-1492156_3388492465
+1492156_3388492465
+
+$ maint/hash.sh < yasm-1.3.0.tar.gz-1492156_3388492465
+8r87e0fomruv8p3vd8vx5mbc7j8hiu3d
+
+$ readlink yasm-1.3.0.tar.gz-1492156_3388492465
+by-hash/8r87e0fomruv8p3vd8vx5mbc7j8hiu3d
+
+$ readlink yasm-1.3.0.tar.gz-1492156_3388492465.refs 
+by-hash/8r87e0fomruv8p3vd8vx5mbc7j8hiu3d.refs
+
+$ cat yasm-1.3.0.tar.gz-1492156_3388492465.refs 
+/home/mnt/netbsd/pkgsrc/stable/pkgsrc/distfiles/yasm-1.3.0.tar.gz
+
+This means that the original file 
+"/home/mnt/netbsd/pkgsrc/stable/pkgsrc/distfiles/yasm-1.3.0.tar.gz" has been 
+replaced by an absolute symlink to "./yasm-1.3.0.tar.gz-1492156_3388492465", 
+which itself is a relative symlink to file 
+"by-hash/8r87e0fomruv8p3vd8vx5mbc7j8hiu3d" with the actual file contents.
+
+The "1492156_3388492465"-part of the filename is the size (1492156 bytes in 
+this case) of the file followed by a CRC (as calculated by "cksum") of the 
+original file contents, while the "8r87e0fomruv8p3vd8vx5mbc7j8hiu3d"-part is a 
+cryptographic hash calculated by script "maint/hash.sh".
+
+The size-part of the filename serves the purpose the convey an idea of the 
+actual file size when only looking at the replacement symlink's target without 
+access to THIS filesystem (perhaps because it currently not mounted).
+
+The CRC-part of the filename serves the purpose of disambiguating the original 
+basenames for the case that different source archives with identical basenames 
+and identical file sizes have been moved to THIS filesystem.
+
+The hash-part of the filenames serves de-duplication of differently named 
+files which nevertheless have the same contents.
+
+The .refs files keep track of the existing replacement symlinks which 
+reference files within THIS filesystem. They contain a list of absolute real 
+pathnames of symlinks which all reference a file with the same contents. This 
+list is kept sorted according to locale "POSIX" without duplicate lines.
+
+If a .refs-File is empty, this means no symlinks anywhere reference this 
+source archive file any longer, so it may be deleted safely (along with its 
+associated .refs file and the CRC-based symlinks).
+
+In order to avoid removal of a source archive which is not referenced from 
+anywhere else any longer but shall still be kept, symlinks can be created 
+somewhere within the keep/ subdirectory tree. ".refs"-file entries for those 
+symlinks will then be added as usual, ensuring the archive will never be 
+deleted as a consequence of missing references.
